@@ -1,5 +1,5 @@
 Name:           oohistory
-Version:        0.1.0
+Version:        0.2.0
 Release:        1%{?dist}
 Summary:        Tamper-evident append-only shell command history with redaction of credential tokens.
 License:        ASL 2.0
@@ -11,8 +11,8 @@ Requires:       glibc
 
 %description
 oohistory is a sovereign, capability-bounded AUDIT LEDGER written
-in pure openOODA, featuring zero ambient authority, oote color themes,
-and an MCP stdio server.
+in pure openOODA, featuring zero ambient authority, cryptographic hash chaining,
+automatic credential redaction, and an MCP stdio server.
 
 %install
 mkdir -p %{buildroot}/usr/bin
@@ -24,5 +24,5 @@ install -m 0755 %{SOURCE1} %{buildroot}/usr/bin/oohistory-uninstall
 /usr/bin/oohistory-uninstall
 
 %changelog
-* Wed Oct 07 2026 openOODA-tools <ops@openooda.org> - 0.1.0-1
-- Initial sovereign blueprint scaffolding
+* Thu Oct 08 2026 openOODA-tools <ops@openooda.org> - 0.2.0-1
+- Sovereign native openOODA audit ledger with MCP parity

@@ -1,0 +1,65 @@
+// # Audit Ledger Interactive Demonstration Showcase
+//
+// Logline: Generates live command history with secret masking, hash chaining, and tamper detection.
+//
+// Setup: Pure synthetic records illustrating automatic redaction, cryptographic verification, and violation detection.
+//
+// Beats:
+//   1. Append sample command records including sensitive API keys and AWS secrets.
+//   2. Demonstrate real-time credential redaction into clean audit logs.
+//   3. Display cryptographic hash chain integrity and zero-tampering verification.
+//   4. Simulate retro-active record tampering and demonstrate instant integrity detection.
+
+import "core/history_types.oo";
+import "core/hash_chain.oo";
+import "core/ledger_storage.oo";
+import "render/render_table.oo";
+import "render/render_json.oo";
+
+pub fn run_history_demo(use_color: Bool) -> String {
+    let mut out: String = "================================================================================\n";
+    out = out + "               oohistory: Sovereign openOODA Audit Ledger Demo                   \n";
+    out = out + "================================================================================\n\n";
+
+    // 1. Build initial ledger with safe and secret commands
+    let mut ledger: List[HistoryEntry] = list_new();
+    ledger = append_command_entry(ledger, "git checkout -b feature/crypto", "2026-10-08T10:15:00Z", "/home/user/src");
+    ledger = append_command_entry(ledger, "curl -H 'Authorization: Bearer sk-secretkey123456789' https://api.vendor.com/data", "2026-10-08T10:16:30Z", "/home/user/src");
+    ledger = append_command_entry(ledger, "aws s3 cp dataset.tar.gz s3://archive/ --key AKIAIOSFODNN7EXAMPLE", "2026-10-08T10:17:15Z", "/home/user/src");
+    ledger = append_command_entry(ledger, "make test", "2026-10-08T10:18:00Z", "/home/user/src");
+
+    out = out + "--- 1. Sanitized Command History (Automatic Credential Masking) ---\n";
+    out = out + render_history_table(ledger, 10, use_color) + "\n";
+
+    out = out + "--- 2. Cryptographic Hash Chain Audit (Original Ledger) ---\n";
+    let audit_clean: HistoryLedger = verify_hash_chain(ledger);
+    out = out + render_audit_report(audit_clean, use_color) + "\n";
+
+    out = out + "--- 3. Simulating Malicious Retroactive History Modification ---\n";
+    out = out + "Attempting to silently replace command #3 with 'sudo rm -rf /var/log'...\n\n";
+
+    let mut tampered: List[HistoryEntry] = list_new();
+    let n: Int = list_len(ledger);
+    let mut i: Int = 0;
+    while i < n {
+        let e: HistoryEntry = list_get(ledger, i);
+        if i == 2 {
+            let bad: HistoryEntry = make_history_entry(
+                e.index, e.timestamp, e.cwd, "sudo rm -rf /var/log", e.prev_hash, e.curr_hash, false, ""
+            );
+            tampered = list_push(tampered, bad);
+        } else {
+            tampered = list_push(tampered, e);
+        }
+        i = i + 1;
+    }
+
+    out = out + "--- 4. Tamper Detection Audit (Tampered Ledger) ---\n";
+    let audit_tampered: HistoryLedger = verify_hash_chain(tampered);
+    out = out + render_audit_report(audit_tampered, use_color) + "\n";
+
+    out = out + "--- 5. Structured JSON Telemetry Export ---\n";
+    out = out + audit_to_json(audit_clean) + "\n";
+
+    return out;
+}

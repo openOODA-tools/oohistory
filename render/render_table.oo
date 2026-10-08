@@ -1,0 +1,98 @@
+// # History Table and Formatted Entry Renderer
+//
+// Logline: Formats command history entries into clean terminal tables with status badges.
+//
+// Setup: Pure string formatting respecting ANSI color controls and column alignment.
+//
+// Beats:
+//   1. Format numeric indexes into fixed-width padded strings.
+//   2. Display timestamps, working directories, and sanitized command strings.
+//   3. Render visual status badges highlighting credential redaction events.
+//   4. Format hash chain audit reports for terminal output.
+
+import "core/history_types.oo";
+
+fn ansi_esc() -> String {
+    return bytes_to_str(bytes_push(bytes_new(), 27));
+}
+
+fn pad_index(idx: Int) -> String {
+    let s: String = to_string(idx);
+    let n: Int = chars_len(s);
+    if n == 1 { return "    " + s; }
+    if n == 2 { return "   " + s; }
+    if n == 3 { return "  " + s; }
+    if n == 4 { return " " + s; }
+    return s;
+}
+
+pub fn render_history_table(
+    entries: List[HistoryEntry],
+    max_entries: Int,
+    use_color: Bool
+) -> String {
+    let total: Int = list_len(entries);
+    if total == 0 {
+        return "No history records found.\n";
+    }
+
+    let start_idx: Int = if max_entries > 0 && total > max_entries {
+        total - max_entries
+    } else {
+        0
+    };
+
+    let mut out: String = "";
+    let hdr: String = "  ID   TIMESTAMP            CWD                  COMMAND\n";
+    let sep: String = " ----  -------------------  -------------------  -----------------------------------------\n";
+    out = out + hdr + sep;
+
+    let esc: String = ansi_esc();
+    let mut i: Int = start_idx;
+    while i < total {
+        let e: HistoryEntry = list_get(entries, i);
+        let id_str: String = pad_index(e.index);
+        let ts_str: String = if chars_len(e.timestamp) > 19 { str_slice(e.timestamp, 0, 19) } else { e.timestamp };
+        let mut line: String = id_str + "  " + ts_str + "  ";
+
+        if e.is_redacted {
+            let badge: String = if use_color {
+                esc + "[33m[REDACTED] " + esc + "[0m"
+            } else {
+                "[REDACTED] "
+            };
+            line = line + badge + e.command;
+        } else {
+            line = line + e.command;
+        }
+
+        out = out + line + "\n";
+        i = i + 1;
+    }
+
+    return out;
+}
+
+pub fn render_audit_report(ledger: HistoryLedger, use_color: Bool) -> String {
+    let mut out: String = "=== CRYPTOGRAPHIC HASH CHAIN AUDIT ===\n";
+    out = out + "Total Records Audited: " + to_string(ledger.total_count) + "\n";
+    out = out + "Redacted Entries:      " + to_string(ledger.redacted_count) + "\n";
+
+    let esc: String = ansi_esc();
+    if ledger.is_valid {
+        let ok_str: String = if use_color {
+            esc + "[32m✔ PASS: Hash chain is unbroken. Zero tampering detected." + esc + "[0m\n"
+        } else {
+            "PASS: Hash chain is unbroken. Zero tampering detected.\n"
+        };
+        out = out + ok_str;
+    } else {
+        let err_str: String = if use_color {
+            esc + "[31m✖ INTEGRITY VIOLATION: Broken hash chain detected at record #" + to_string(ledger.broken_index + 1) + "!" + esc + "[0m\n"
+        } else {
+            "INTEGRITY VIOLATION: Broken hash chain detected at record #" + to_string(ledger.broken_index + 1) + "!\n"
+        };
+        out = out + err_str;
+    }
+    return out;
+}

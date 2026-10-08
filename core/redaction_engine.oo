@@ -1,0 +1,154 @@
+// # Credential Redaction Engine for Command History
+//
+// Logline: Scans command strings and masks API keys, bearer tokens, and private secrets.
+//
+// Setup: Pure string pattern matching and token substitution without external regex engines.
+//
+// Beats:
+//   1. Detect OpenAI and vendor API keys beginning with sk- prefix.
+//   2. Detect AWS access key identifiers beginning with AKIA prefix.
+//   3. Detect GitHub personal access tokens beginning with ghp_ or gho_.
+//   4. Redact bearer authorization headers and inline password arguments.
+
+pub type RedactionResult = struct {
+    sanitized: String,
+    is_redacted: Bool,
+    redaction_type: String
+};
+
+pub fn make_redaction_result(sanitized: String, is_redacted: Bool, rtype: String) -> RedactionResult {
+    return RedactionResult {
+        sanitized: sanitized,
+        is_redacted: is_redacted,
+        redaction_type: rtype
+    };
+}
+
+fn is_alnum(c: String) -> Bool {
+    let b: Int = ord(c);
+    if (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95 || b == 45 {
+        return true;
+    }
+    return false;
+}
+
+fn redact_prefix_token(s: String, prefix: String, mask: String) -> RedactionResult {
+    let p_idx: Int = str_index_of(s, prefix);
+    if p_idx < 0 {
+        return make_redaction_result(s, false, "");
+    }
+
+    let n: Int = chars_len(s);
+    let mut end_idx: Int = p_idx + chars_len(prefix);
+    while end_idx < n && is_alnum(char_at(s, end_idx)) {
+        end_idx = end_idx + 1;
+    }
+
+    // Require token to have at least 8 chars after prefix to avoid false positives
+    if end_idx - (p_idx + chars_len(prefix)) < 6 {
+        return make_redaction_result(s, false, "");
+    }
+
+    let prefix_part: String = str_slice(s, 0, p_idx);
+    let suffix_part: String = str_slice(s, end_idx, n);
+    let new_str: String = prefix_part + mask + suffix_part;
+    return make_redaction_result(new_str, true, mask);
+}
+
+fn redact_bearer(s: String) -> RedactionResult {
+    let key: String = "Bearer ";
+    let idx: Int = str_index_of(s, key);
+    if idx < 0 {
+        return make_redaction_result(s, false, "");
+    }
+
+    let n: Int = chars_len(s);
+    let mut end_idx: Int = idx + chars_len(key);
+    while end_idx < n {
+        let ch: String = char_at(s, end_idx);
+        if ch == " " || ch == "\"" || ch == "'" || ch == ";" || ch == "\n" {
+            break;
+        }
+        end_idx = end_idx + 1;
+    }
+
+    let prefix_part: String = str_slice(s, 0, idx + chars_len(key));
+    let suffix_part: String = str_slice(s, end_idx, n);
+    return make_redaction_result(prefix_part + "[REDACTED:BEARER]" + suffix_part, true, "BEARER");
+}
+
+fn redact_inline_secret(s: String, needle: String, mask: String) -> RedactionResult {
+    let idx: Int = str_index_of(s, needle);
+    if idx < 0 {
+        return make_redaction_result(s, false, "");
+    }
+
+    let n: Int = chars_len(s);
+    let mut end_idx: Int = idx + chars_len(needle);
+    while end_idx < n {
+        let ch: String = char_at(s, end_idx);
+        if ch == " " || ch == "\"" || ch == "'" || ch == ";" || ch == "&" || ch == "\n" {
+            break;
+        }
+        end_idx = end_idx + 1;
+    }
+
+    let prefix_part: String = str_slice(s, 0, idx + chars_len(needle));
+    let suffix_part: String = str_slice(s, end_idx, n);
+    return make_redaction_result(prefix_part + mask + suffix_part, true, mask);
+}
+
+pub fn sanitize_command(raw: String) -> RedactionResult {
+    let mut current: String = raw;
+    let mut was_redacted: Bool = false;
+    let mut r_type: String = "";
+
+    // 1. OpenAI / generic sk- API keys
+    let r1: RedactionResult = redact_prefix_token(current, "sk-", "[REDACTED:API_KEY]");
+    if r1.is_redacted {
+        current = r1.sanitized;
+        was_redacted = true;
+        r_type = "API_KEY";
+    }
+
+    // 2. AWS Access Key IDs
+    let r2: RedactionResult = redact_prefix_token(current, "AKIA", "[REDACTED:AWS_KEY]");
+    if r2.is_redacted {
+        current = r2.sanitized;
+        was_redacted = true;
+        r_type = if was_redacted { r_type + ",AWS_KEY" } else { "AWS_KEY" };
+    }
+
+    // 3. GitHub personal access tokens
+    let r3: RedactionResult = redact_prefix_token(current, "ghp_", "[REDACTED:GH_TOKEN]");
+    if r3.is_redacted {
+        current = r3.sanitized;
+        was_redacted = true;
+        r_type = if was_redacted { r_type + ",GH_TOKEN" } else { "GH_TOKEN" };
+    }
+
+    // 4. Bearer tokens
+    let r4: RedactionResult = redact_bearer(current);
+    if r4.is_redacted {
+        current = r4.sanitized;
+        was_redacted = true;
+        r_type = if was_redacted { r_type + ",BEARER" } else { "BEARER" };
+    }
+
+    // 5. Inline passwords: password=... or -p ...
+    let r5: RedactionResult = redact_inline_secret(current, "password=", "[REDACTED:PASSWORD]");
+    if r5.is_redacted {
+        current = r5.sanitized;
+        was_redacted = true;
+        r_type = if was_redacted { r_type + ",PASSWORD" } else { "PASSWORD" };
+    }
+
+    let r6: RedactionResult = redact_inline_secret(current, "PASSWORD=", "[REDACTED:PASSWORD]");
+    if r6.is_redacted {
+        current = r6.sanitized;
+        was_redacted = true;
+        r_type = if was_redacted { r_type + ",PASSWORD" } else { "PASSWORD" };
+    }
+
+    return make_redaction_result(current, was_redacted, r_type);
+}

@@ -1,0 +1,56 @@
+// # Render Subsystem Verification Anchor
+//
+// Logline: Automated self-tests for history tables, audit reports, and demo showcases.
+//
+// Setup: Exercises terminal table generation and JSON serialization of history ledgers.
+//
+// Beats:
+//   1. Verify history table formatting with index padding and timestamps.
+//   2. Verify audit report generation for unbroken and violated chains.
+//   3. Verify JSON serialization of entries, ledgers, and audit telemetry.
+//   4. Verify demo showcase generation with secret masking and tamper warnings.
+
+import "core/history_types.oo";
+import "core/ledger_storage.oo";
+import "core/hash_chain.oo";
+import "render/render_table.oo";
+import "render/render_json.oo";
+import "render/render_demo.oo";
+
+pub fn verify_render() -> Bool {
+    let mut ledger: List[HistoryEntry] = list_new();
+    ledger = append_command_entry(ledger, "ls -la", "2026-10-08T12:00:00Z", "/home/user");
+    ledger = append_command_entry(ledger, "git status", "2026-10-08T12:01:00Z", "/home/user");
+
+    // Test 1: render_history_table
+    let tbl: String = render_history_table(ledger, 10, false);
+    if !str_contains(tbl, "TIMESTAMP") || !str_contains(tbl, "ls -la") || !str_contains(tbl, "git status") {
+        return false;
+    }
+
+    // Test 2: render_audit_report
+    let audit: HistoryLedger = verify_hash_chain(ledger);
+    let rpt: String = render_audit_report(audit, false);
+    if !str_contains(rpt, "CRYPTOGRAPHIC HASH CHAIN AUDIT") || !str_contains(rpt, "PASS") {
+        return false;
+    }
+
+    // Test 3: JSON serializers
+    let j_entry: String = entry_to_json(list_get(ledger, 0));
+    if !str_contains(j_entry, "\"command\":\"ls -la\"") || !str_contains(j_entry, "\"is_redacted\":false") {
+        return false;
+    }
+
+    let j_audit: String = audit_to_json(audit);
+    if !str_contains(j_audit, "\"is_valid\":true") || !str_contains(j_audit, "\"total_count\":2") {
+        return false;
+    }
+
+    // Test 4: Demo
+    let demo: String = run_history_demo(false);
+    if !str_contains(demo, "oohistory: Sovereign openOODA Audit Ledger Demo") || !str_contains(demo, "VIOLATION") {
+        return false;
+    }
+
+    return true;
+}

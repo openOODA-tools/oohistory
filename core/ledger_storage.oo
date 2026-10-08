@@ -1,0 +1,138 @@
+// # Ledger Persistence and Append Storage
+//
+// Logline: Serializes and loads tamper-evident history entries with capability-bounded IO.
+//
+// Setup: Bridges memory representations to tab-delimited records under FsReadCap and FsWriteCap.
+//
+// Beats:
+//   1. Serialize history entries into canonical tab-delimited ledger records.
+//   2. Parse serialized text logs into typed HistoryEntry structures.
+//   3. Append sanitized command entries with automatic hash chain linking.
+//   4. Read and persist ledger files with zero ambient leakage.
+
+import "core/history_types.oo";
+import "core/redaction_engine.oo";
+import "core/hash_chain.oo";
+
+pub fn serialize_entry(e: HistoryEntry) -> String {
+    let red_str: String = if e.is_redacted { "1" } else { "0" };
+    let r_type: String = if chars_len(e.redaction_type) > 0 { e.redaction_type } else { "NONE" };
+    return to_string(e.index) + "\t" + e.timestamp + "\t" + e.cwd + "\t" +
+           e.command + "\t" + e.prev_hash + "\t" + e.curr_hash + "\t" +
+           red_str + "\t" + r_type;
+}
+
+fn parse_int(s: String) -> Int {
+    let n: Int = chars_len(s);
+    let mut out: Int = 0;
+    let mut i: Int = 0;
+    while i < n {
+        let b: Int = ord(char_at(s, i));
+        if b >= 48 && b <= 57 {
+            out = out * 10 + (b - 48);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+pub fn parse_ledger_text(text: String) -> List[HistoryEntry] {
+    let lines: List[String] = str_split(text, "\n");
+    let n: Int = list_len(lines);
+    let mut out: List[HistoryEntry] = list_new();
+    let mut i: Int = 0;
+
+    while i < n {
+        let line: String = str_trim(list_get(lines, i));
+        if chars_len(line) > 0 && !str_starts_with(line, "#") {
+            let fields: List[String] = str_split(line, "\t");
+            if list_len(fields) >= 7 {
+                let idx: Int = parse_int(list_get(fields, 0));
+                let ts: String = list_get(fields, 1);
+                let cwd: String = list_get(fields, 2);
+                let cmd: String = list_get(fields, 3);
+                let prev_h: String = list_get(fields, 4);
+                let curr_h: String = list_get(fields, 5);
+                let red_flag: Bool = (list_get(fields, 6) == "1");
+                let red_type: String = if list_len(fields) >= 8 {
+                    let rt: String = list_get(fields, 7);
+                    if rt == "NONE" { "" } else { rt }
+                } else {
+                    ""
+                };
+
+                let entry: HistoryEntry = make_history_entry(
+                    idx, ts, cwd, cmd, prev_h, curr_h, red_flag, red_type
+                );
+                out = list_push(out, entry);
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+pub fn append_command_entry(
+    ledger: List[HistoryEntry],
+    raw_cmd: String,
+    timestamp: String,
+    cwd: String
+) -> List[HistoryEntry] {
+    let total: Int = list_len(ledger);
+    let next_index: Int = total + 1;
+    let prev_hash: String = if total > 0 {
+        let last_entry: HistoryEntry = list_get(ledger, total - 1);
+        last_entry.curr_hash
+    } else {
+        genesis_hash()
+    };
+
+    let red_res: RedactionResult = sanitize_command(raw_cmd);
+    let curr_hash: String = compute_entry_hash(
+        next_index,
+        timestamp,
+        cwd,
+        red_res.sanitized,
+        prev_hash
+    );
+
+    let new_entry: HistoryEntry = make_history_entry(
+        next_index,
+        timestamp,
+        cwd,
+        red_res.sanitized,
+        prev_hash,
+        curr_hash,
+        red_res.is_redacted,
+        red_res.redaction_type
+    );
+
+    return list_push(ledger, new_entry);
+}
+
+pub fn load_ledger_file(fs: &FsReadCap, path: String) -> Result[List[HistoryEntry], String] {
+    let content_res: Result[String, String] = oo_read_file(fs, path);
+    if !content_res.is_ok() {
+        return match content_res {
+            Ok(_) => Err("Unable to read ledger file"),
+            Err(e) => Err(e)
+        };
+    }
+    let content: String = match content_res { Ok(s) => s, Err(_) => "" };
+    return Ok(parse_ledger_text(content));
+}
+
+pub fn save_ledger_file(
+    fs: &FsWriteCap,
+    path: String,
+    entries: List[HistoryEntry]
+) -> Result[Bool, String] {
+    let mut out: String = "# oohistory ledger v1\n";
+    let n: Int = list_len(entries);
+    let mut i: Int = 0;
+    while i < n {
+        out = out + serialize_entry(list_get(entries, i)) + "\n";
+        i = i + 1;
+    }
+    return oo_write_file(fs, path, out);
+}

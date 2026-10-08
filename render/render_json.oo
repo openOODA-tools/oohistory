@@ -1,0 +1,71 @@
+// # Structured JSON Serializer for Command History
+//
+// Logline: Emits capability-bounded JSON telemetry for history records, audits, and stats.
+//
+// Setup: Pure string formatting avoiding external serializers with manual string escaping.
+//
+// Beats:
+//   1. Serialize individual HistoryEntry records with hash links.
+//   2. Format complete ledgers as JSON array payloads.
+//   3. Serialize cryptographic audit verification reports.
+//   4. Emit command frequency statistics and redaction metrics.
+
+import "core/history_types.oo";
+
+fn escape_json(s: String) -> String {
+    let mut out: String = "";
+    let n: Int = chars_len(s);
+    let mut i: Int = 0;
+    while i < n {
+        let c: String = char_at(s, i);
+        if c == "\\" { out = out + "\\\\"; }
+        else if c == "\"" { out = out + "\\\""; }
+        else if c == "\n" { out = out + "\\n"; }
+        else if c == "\r" { out = out + "\\r"; }
+        else if c == "\t" { out = out + "\\t"; }
+        else { out = out + c; }
+        i = i + 1;
+    }
+    return out;
+}
+
+pub fn entry_to_json(e: HistoryEntry) -> String {
+    let red_str: String = if e.is_redacted { "true" } else { "false" };
+    return "{\"index\":" + to_string(e.index) +
+        ",\"timestamp\":\"" + escape_json(e.timestamp) + "\"" +
+        ",\"cwd\":\"" + escape_json(e.cwd) + "\"" +
+        ",\"command\":\"" + escape_json(e.command) + "\"" +
+        ",\"prev_hash\":\"" + e.prev_hash + "\"" +
+        ",\"curr_hash\":\"" + e.curr_hash + "\"" +
+        ",\"is_redacted\":" + red_str +
+        ",\"redaction_type\":\"" + escape_json(e.redaction_type) + "\"}";
+}
+
+pub fn ledger_to_json(entries: List[HistoryEntry]) -> String {
+    let n: Int = list_len(entries);
+    let mut out: String = "[";
+    let mut i: Int = 0;
+    while i < n {
+        if i > 0 { out = out + ","; }
+        out = out + entry_to_json(list_get(entries, i));
+        i = i + 1;
+    }
+    out = out + "]";
+    return out;
+}
+
+pub fn audit_to_json(ledger: HistoryLedger) -> String {
+    let valid_str: String = if ledger.is_valid { "true" } else { "false" };
+    return "{\"is_valid\":" + valid_str +
+        ",\"total_count\":" + to_string(ledger.total_count) +
+        ",\"redacted_count\":" + to_string(ledger.redacted_count) +
+        ",\"broken_index\":" + to_string(ledger.broken_index) + "}";
+}
+
+pub fn stats_to_json(stats: HistoryStats) -> String {
+    let valid_str: String = if stats.integrity_valid { "true" } else { "false" };
+    return "{\"total_entries\":" + to_string(stats.total_entries) +
+        ",\"unique_commands\":" + to_string(stats.unique_commands) +
+        ",\"redacted_entries\":" + to_string(stats.redacted_entries) +
+        ",\"integrity_valid\":" + valid_str + "}";
+}

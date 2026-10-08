@@ -1,0 +1,125 @@
+// # Model Context Protocol (MCP) Stdio Server for oohistory
+//
+// Logline: Streaming JSON-RPC 2.0 stdio server providing command audit ledger inspection.
+//
+// Setup: Demands FsReadCap and FsWriteCap for ledger verification and append operations.
+//
+// Beats:
+//   1. Process incoming JSON-RPC 2.0 requests over standard input.
+//   2. Dispatch initialize, tools/list, and tools/call methods.
+//   3. Implement history_list, history_search, history_append, history_verify, and history_demo tools.
+//   4. Emit capability-bounded JSON-RPC responses for AI agents.
+
+import "core/history_types.oo";
+import "core/hash_chain.oo";
+import "core/ledger_storage.oo";
+import "render/render_json.oo";
+import "render/render_demo.oo";
+import "ipc/json_field.oo";
+import "ipc/cli_options.oo";
+
+pub fn run_mcp_server(fs: &FsReadCap, fsw: &FsWriteCap) {
+    let mut session_ledger: List[HistoryEntry] = list_new();
+    // Prime with session genesis records
+    session_ledger = append_command_entry(session_ledger, "session_start", "2026-10-08T00:00:00Z", "/workspace");
+
+    let mut running: Bool = true;
+    while running {
+        let line_res: Result[String, String] = oo_read_stdin_chunk(fs, 8192);
+        if !line_res.is_ok() {
+            running = false;
+        } else {
+            let line: String = match line_res { Ok(s) => s, Err(_) => "" };
+            let trimmed: String = str_trim(line);
+            if chars_len(trimmed) == 0 {
+                running = false;
+            } else {
+                let id: String = json_get_field(trimmed, "id");
+                let method: String = json_get_string(trimmed, "method");
+
+                if method == "initialize" {
+                    let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                        ",\"result\":{\"protocolVersion\":\"2024-11-05\"," +
+                        "\"serverInfo\":{\"name\":\"oohistory\",\"version\":\"0.2.0\"}," +
+                        "\"capabilities\":{\"tools\":{}}}}";
+                    println(resp);
+                } else if method == "notifications/initialized" {
+                    // ack
+                } else if method == "tools/list" {
+                    let t1: String = "{\"name\":\"history_list\",\"description\":\"Retrieve past shell command history entries\"," +
+                        "\"inputSchema\":{\"type\":\"object\",\"properties\":{\"limit\":{\"type\":\"integer\"}}}}";
+                    let t2: String = "{\"name\":\"history_search\",\"description\":\"Search command history by keyword or substring\"," +
+                        "\"inputSchema\":{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}},\"required\":[\"query\"]}}";
+                    let t3: String = "{\"name\":\"history_append\",\"description\":\"Record a new command entry with automatic credential redaction and hash chaining\"," +
+                        "\"inputSchema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"},\"cwd\":{\"type\":\"string\"}},\"required\":[\"command\"]}}";
+                    let t4: String = "{\"name\":\"history_verify\",\"description\":\"Audit the tamper-evident cryptographic hash chain for integrity\"," +
+                        "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}}";
+                    let t5: String = "{\"name\":\"history_demo\",\"description\":\"Run interactive showcase demonstrating secret redaction, hash chaining, and tamper detection\"," +
+                        "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}}";
+                    let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                        ",\"result\":{\"tools\":[" + t1 + "," + t2 + "," + t3 + "," + t4 + "," + t5 + "]}}";
+                    println(resp);
+                } else if method == "tools/call" {
+                    let params: String = json_get_field(trimmed, "params");
+                    let tool_name: String = json_get_string(params, "name");
+                    let args: String = json_get_field(params, "arguments");
+
+                    if tool_name == "history_list" {
+                        let lim_str: String = json_get_string(args, "limit");
+                        let lim: Int = if chars_len(lim_str) > 0 { parse_int_val(lim_str) } else { 20 };
+                        let j_out: String = ledger_to_json(session_ledger);
+                        let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                            ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(j_out) + "\"}]}}";
+                        println(resp);
+                    } else if tool_name == "history_search" {
+                        let query: String = json_get_string(args, "query");
+                        let mut filtered: List[HistoryEntry] = list_new();
+                        let n: Int = list_len(session_ledger);
+                        let mut i: Int = 0;
+                        while i < n {
+                            let e: HistoryEntry = list_get(session_ledger, i);
+                            if str_contains(e.command, query) || str_contains(e.cwd, query) {
+                                filtered = list_push(filtered, e);
+                            }
+                            i = i + 1;
+                        }
+                        let j_out: String = ledger_to_json(filtered);
+                        let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                            ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(j_out) + "\"}]}}";
+                        println(resp);
+                    } else if tool_name == "history_append" {
+                        let cmd: String = json_get_string(args, "command");
+                        let cwd: String = json_get_string(args, "cwd");
+                        let actual_cwd: String = if chars_len(cwd) > 0 { cwd } else { "/workspace" };
+                        session_ledger = append_command_entry(session_ledger, cmd, "2026-10-08T12:00:00Z", actual_cwd);
+                        let last_idx: Int = list_len(session_ledger) - 1;
+                        let last_e: HistoryEntry = list_get(session_ledger, last_idx);
+                        let j_out: String = entry_to_json(last_e);
+                        let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                            ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(j_out) + "\"}]}}";
+                        println(resp);
+                    } else if tool_name == "history_verify" {
+                        let audit: HistoryLedger = verify_hash_chain(session_ledger);
+                        let j_out: String = audit_to_json(audit);
+                        let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                            ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(j_out) + "\"}]}}";
+                        println(resp);
+                    } else if tool_name == "history_demo" {
+                        let demo_out: String = run_history_demo(false);
+                        let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                            ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(demo_out) + "\"}]}}";
+                        println(resp);
+                    } else {
+                        let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                            ",\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}";
+                        println(resp);
+                    }
+                } else {
+                    let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                        ",\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}";
+                    println(resp);
+                }
+            }
+        }
+    }
+}

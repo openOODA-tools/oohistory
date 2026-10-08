@@ -1,0 +1,9 @@
+Package: oohistory
+Version: 0.2.0-1
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: openOODA-tools <ops@openooda.org>
+Description: Sovereign Audit Ledger for Shell Command History
+ Tamper-evident append-only shell command history with redaction of
+ credential tokens and Model Context Protocol stdio server in pure openOODA.

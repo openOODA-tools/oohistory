@@ -1,0 +1,75 @@
+// # Core Subsystem Verification Anchor
+//
+// Logline: Automated self-tests for credential redaction, hash chaining, and tamper detection.
+//
+// Setup: Exercises secret masking patterns, Merkle linkage verification, and tamper simulation.
+//
+// Beats:
+//   1. Verify credential redaction of API keys, bearer tokens, and passwords.
+//   2. Verify deterministic 64-character hash digest computation.
+//   3. Verify unbroken hash chain integrity across multiple command appends.
+//   4. Verify tamper detection when an intermediate command is retro-modified.
+
+import "core/history_types.oo";
+import "core/redaction_engine.oo";
+import "core/hash_chain.oo";
+import "core/ledger_storage.oo";
+
+pub fn verify_core() -> Bool {
+    // Test 1: Redaction of API key
+    let cmd1: String = "curl -H 'X-Api-Key: sk-antigravity999888777' https://api.openai.com/v1";
+    let r1: RedactionResult = sanitize_command(cmd1);
+    if r1.is_redacted == false || str_contains(r1.sanitized, "sk-antigravity") || str_contains(r1.sanitized, "[REDACTED:API_KEY]") == false {
+        return false;
+    }
+
+    // Test 2: Redaction of inline password
+    let cmd2: String = "mysql -u admin -p password=supersecretpass";
+    let r2: RedactionResult = sanitize_command(cmd2);
+    if r2.is_redacted == false || str_contains(r2.sanitized, "supersecretpass") || str_contains(r2.sanitized, "[REDACTED:PASSWORD]") == false {
+        return false;
+    }
+
+    // Test 3: Hash chain construction
+    let mut ledger: List[HistoryEntry] = list_new();
+    ledger = append_command_entry(ledger, "git status", "2026-10-08T12:00:00Z", "/home/user");
+    ledger = append_command_entry(ledger, "git commit -m 'initial'", "2026-10-08T12:01:00Z", "/home/user");
+    ledger = append_command_entry(ledger, "export API_KEY=sk-test123456789", "2026-10-08T12:02:00Z", "/home/user");
+
+    if list_len(ledger) != 3 {
+        return false;
+    }
+
+    // Test 4: Unbroken chain audit
+    let audit_clean: HistoryLedger = verify_hash_chain(ledger);
+    if audit_clean.is_valid == false || audit_clean.redacted_count != 1 {
+        return false;
+    }
+
+    // Test 5: Serialization round-trip
+    let text: String = serialize_entry(list_get(ledger, 0)) + "\n" +
+                       serialize_entry(list_get(ledger, 1)) + "\n" +
+                       serialize_entry(list_get(ledger, 2));
+    let parsed: List[HistoryEntry] = parse_ledger_text(text);
+    if list_len(parsed) != 3 || list_get(parsed, 0).command != "git status" {
+        return false;
+    }
+
+    // Test 6: Tamper detection
+    let mut tampered: List[HistoryEntry] = list_new();
+    tampered = list_push(tampered, list_get(ledger, 0));
+    // Tamper with command at index 1 without updating its hash
+    let e1: HistoryEntry = list_get(ledger, 1);
+    let bad_e1: HistoryEntry = make_history_entry(
+        e1.index, e1.timestamp, e1.cwd, "rm -rf /", e1.prev_hash, e1.curr_hash, false, ""
+    );
+    tampered = list_push(tampered, bad_e1);
+    tampered = list_push(tampered, list_get(ledger, 2));
+
+    let audit_tampered: HistoryLedger = verify_hash_chain(tampered);
+    if audit_tampered.is_valid || audit_tampered.broken_index != 1 {
+        return false;
+    }
+
+    return true;
+}

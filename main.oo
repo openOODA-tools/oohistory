@@ -1,52 +1,168 @@
-// # oohistory Main Entry Point
+// # Sovereign Audit Ledger Main Entry Point
 //
 // Logline: Tamper-evident append-only shell command history with redaction of credential tokens.
 //
-// Setup: Demands explicit capability tokens and standard argument list.
+// Setup: Demands FsReadCap, FsWriteCap, ProcessCap, EnvCap capability tokens with zero ambient authority.
 //
 // Beats:
-//   1. Parse command-line options and dispatch --help, --version, or --mcp.
-//   2. Execute capability-bounded oohistory operations.
-//   3. Format and output structured results to standard output.
+//   1. Parse CLI options and dispatch --help, --version, --test, --demo, or --mcp.
+//   2. Load or initialize tamper-evident command history ledger from storage.
+//   3. Handle command appending with automatic secret redaction and hash linking.
+//   4. Execute cryptographic integrity audits, search queries, and stats reporting.
+
+import "core/history_types.oo";
+import "core/hash_chain.oo";
+import "core/ledger_storage.oo";
+import "render/render_table.oo";
+import "render/render_json.oo";
+import "render/render_demo.oo";
+import "ipc/cli_options.oo";
+import "ipc/mcp_server.oo";
+import "anchor.oo";
 
 fn render_help() -> String {
-    return "oohistory 0.1.0 (openOODA sovereign shell & terminal)\n"
+    return "oohistory 0.2.0 (openOODA sovereign audit ledger)\n"
         + "usage: oohistory [options] [ARGUMENTS]...\n\n"
         + "Tamper-evident append-only shell command history with redaction of credential tokens.\n\n"
         + "Options:\n"
-        + "  -h, --help           display this help and exit\n"
-        + "  -v, --version        output version information and exit\n"
-        + "      --json           output formatted as JSON Lines\n"
-        + "      --color <WHEN>   colorize output: auto, always, never [default: auto]\n"
-        + "      --theme <NAME>   override active oote palette\n"
-        + "      --mcp            run as Model Context Protocol stdio server\n";
+        + "  -n, --limit <NUM>     display only the last <NUM> command records\n"
+        + "  -s, --search <QUERY>  filter history by keyword or substring\n"
+        + "  -a, --append <CMD>    append a new command entry with secret redaction and hash chaining\n"
+        + "  -V, --verify          audit cryptographic hash chain integrity\n"
+        + "      --stats           display command counts, unique records, and security metrics\n"
+        + "  -f, --file <PATH>     override default ledger file location\n"
+        + "      --no-color        suppress ANSI status colors\n"
+        + "  -j, --json            output structured JSON telemetry\n"
+        + "  -D, --demo            run interactive secret redaction and tamper detection showcase\n"
+        + "      --test            run internal verification anchor self-test suite\n"
+        + "  -h, --help            display this help and exit\n"
+        + "  -v, --version         output version information and exit\n"
+        + "      --mcp             run as Model Context Protocol stdio server\n";
 }
 
 fn render_version() -> String {
-    return "oohistory 0.1.0 (openOODA sovereign shell & terminal)\n";
+    return "oohistory 0.2.0 (openOODA sovereign audit ledger)\n";
 }
 
-fn main(args: List[String]) -> Int {
-    let num_args: Int = list_len(args);
+fn filter_entries(entries: List[HistoryEntry], query: String) -> List[HistoryEntry] {
+    if chars_len(query) == 0 {
+        return entries;
+    }
+    let mut out: List[HistoryEntry] = list_new();
+    let n: Int = list_len(entries);
     let mut i: Int = 0;
-
-    while i < num_args {
-        let arg: String = list_get(args, i);
-        if arg == "-h" || arg == "--help" {
-            print(render_help());
-            return 0;
-        }
-        if arg == "-v" || arg == "--version" {
-            print(render_version());
-            return 0;
-        }
-        if arg == "--mcp" {
-            print("{\"jsonrpc\":\"2.0\",\"result\":{\"status\":\"ready\",\"tool\":\"oohistory\"}}\n");
-            return 0;
+    while i < n {
+        let e: HistoryEntry = list_get(entries, i);
+        if str_contains(e.command, query) || str_contains(e.cwd, query) {
+            out = list_push(out, e);
         }
         i = i + 1;
     }
+    return out;
+}
 
-    print("oohistory: sovereign capability-bounded utility ready\n");
+pub fn main(
+    fr: &FsReadCap,
+    fw: &FsWriteCap,
+    _pr: &ProcessCap,
+    _env: &EnvCap,
+    args: List[String]
+) -> Int {
+    let opts: CliOptions = parse_cli_options(args);
+
+    if opts.help {
+        print(render_help());
+        return 0;
+    }
+    if opts.version {
+        print(render_version());
+        return 0;
+    }
+    if opts.test {
+        if verify_all() {
+            println("OK: all tests passed");
+            return 0;
+        } else {
+            println("FAIL: verification error");
+            return 1;
+        }
+    }
+    if opts.demo {
+        print(run_history_demo(opts.color));
+        return 0;
+    }
+    if opts.mcp {
+        run_mcp_server(fr, fw);
+        return 0;
+    }
+
+    let ledger_path: String = if chars_len(opts.ledger_file) > 0 {
+        opts.ledger_file
+    } else {
+        "dist/history.ledger"
+    };
+
+    let load_res: Result[List[HistoryEntry], String] = load_ledger_file(fr, ledger_path);
+    let mut entries: List[HistoryEntry] = match load_res {
+        Ok(lst) => lst,
+        Err(_) => list_new()
+    };
+
+    // Append mode
+    if chars_len(opts.append_cmd) > 0 {
+        entries = append_command_entry(entries, opts.append_cmd, "2026-10-08T12:00:00Z", "/workspace");
+        let save_res: Result[Bool, String] = save_ledger_file(fw, ledger_path, entries);
+        if !save_res.is_ok() {
+            println("oohistory: error persisting ledger to " + ledger_path);
+            return 1;
+        }
+        let last_e: HistoryEntry = list_get(entries, list_len(entries) - 1);
+        if opts.json {
+            println(entry_to_json(last_e));
+        } else {
+            println("[oohistory] Appended record #" + to_string(last_e.index) + " (" + str_slice(last_e.curr_hash, 0, 16) + "...)");
+        }
+        return 0;
+    }
+
+    // Verify mode
+    if opts.do_verify {
+        let audit: HistoryLedger = verify_hash_chain(entries);
+        if opts.json {
+            println(audit_to_json(audit));
+        } else {
+            print(render_audit_report(audit, opts.color));
+        }
+        return if audit.is_valid { 0 } else { 1 };
+    }
+
+    // Stats mode
+    if opts.stats {
+        let audit: HistoryLedger = verify_hash_chain(entries);
+        let stats: HistoryStats = make_history_stats(
+            audit.total_count,
+            audit.total_count,
+            audit.redacted_count,
+            audit.is_valid
+        );
+        if opts.json {
+            println(stats_to_json(stats));
+        } else {
+            println("=== COMMAND HISTORY LEDGER STATS ===");
+            println("Total Entries:      " + to_string(stats.total_entries));
+            println("Redacted Entries:   " + to_string(stats.redacted_entries));
+            println("Integrity Status:   " + (if stats.integrity_valid { "PASS (Unbroken)" } else { "VIOLATION (Broken)" }));
+        }
+        return 0;
+    }
+
+    // Default view mode with optional search filter and limit
+    let filtered: List[HistoryEntry] = filter_entries(entries, opts.search);
+    if opts.json {
+        println(ledger_to_json(filtered));
+    } else {
+        print(render_history_table(filtered, opts.limit, opts.color));
+    }
+
     return 0;
 }

@@ -1,0 +1,89 @@
+// # Audit Ledger and Command History Types
+//
+// Logline: Data structures defining tamper-evident command entries, ledgers, and stats.
+//
+// Setup: Pure value types bounding command metadata, cryptographic hashes, and redaction flags.
+//
+// Beats:
+//   1. Define HistoryEntry for individual command executions and hash links.
+//   2. Define HistoryLedger for audit trail verification and integrity reporting.
+//   3. Define HistoryStats for command depth, uniqueness, and security metrics.
+//   4. Export constructor helpers for immutable history record instantiation.
+
+pub type HistoryEntry = struct {
+    index: Int,
+    timestamp: String,
+    cwd: String,
+    command: String,
+    prev_hash: String,
+    curr_hash: String,
+    is_redacted: Bool,
+    redaction_type: String
+};
+
+pub fn make_history_entry(
+    index: Int,
+    timestamp: String,
+    cwd: String,
+    command: String,
+    prev_hash: String,
+    curr_hash: String,
+    is_redacted: Bool,
+    redaction_type: String
+) -> HistoryEntry {
+    return HistoryEntry {
+        index: index,
+        timestamp: timestamp,
+        cwd: cwd,
+        command: command,
+        prev_hash: prev_hash,
+        curr_hash: curr_hash,
+        is_redacted: is_redacted,
+        redaction_type: redaction_type
+    };
+}
+
+pub type HistoryLedger = struct {
+    entries: List[HistoryEntry],
+    total_count: Int,
+    redacted_count: Int,
+    is_valid: Bool,
+    broken_index: Int
+};
+
+pub fn make_history_ledger(
+    entries: List[HistoryEntry],
+    total_count: Int,
+    redacted_count: Int,
+    is_valid: Bool,
+    broken_index: Int
+) -> HistoryLedger {
+    return HistoryLedger {
+        entries: entries,
+        total_count: total_count,
+        redacted_count: redacted_count,
+        is_valid: is_valid,
+        broken_index: broken_index
+    };
+}
+
+pub type HistoryStats = struct {
+    total_entries: Int,
+    unique_commands: Int,
+    redacted_entries: Int,
+    integrity_valid: Bool
+};
+
+pub fn make_history_stats(
+    total: Int,
+    unique: Int,
+    redacted: Int,
+    valid: Bool
+) -> HistoryStats {
+    return HistoryStats {
+        total_entries: total,
+        unique_commands: unique,
+        redacted_entries: redacted,
+        integrity_valid: valid
+    };
+}

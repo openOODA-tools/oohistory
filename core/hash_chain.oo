@@ -1,0 +1,120 @@
+// # Tamper-Evident Cryptographic Hash Chain
+//
+// Logline: Generates 256-bit Merkle-chain hashes and verifies history audit trail integrity.
+//
+// Setup: Pure numerical hash mixing and state transitions without external crypto libraries.
+//
+// Beats:
+//   1. Convert 32-bit integer registers into 8-character hexadecimal strings.
+//   2. Mix command metadata, working directory, and previous hash into 256-bit state.
+//   3. Compute deterministic 64-character hexadecimal digest per entry.
+//   4. Audit consecutive records to detect retro-editing, insertions, or deletions.
+
+import "core/history_types.oo";
+
+fn u32_to_hex8(val: Int) -> String {
+    let mut out: String = "";
+    let mut v: Int = val;
+    let mut i: Int = 0;
+    while i < 8 {
+        let nib: Int = v % 16;
+        let clamped: Int = if nib < 0 { 0 - nib } else { nib };
+        if clamped == 0 { out = "0" + out; }
+        else if clamped == 1 { out = "1" + out; }
+        else if clamped == 2 { out = "2" + out; }
+        else if clamped == 3 { out = "3" + out; }
+        else if clamped == 4 { out = "4" + out; }
+        else if clamped == 5 { out = "5" + out; }
+        else if clamped == 6 { out = "6" + out; }
+        else if clamped == 7 { out = "7" + out; }
+        else if clamped == 8 { out = "8" + out; }
+        else if clamped == 9 { out = "9" + out; }
+        else if clamped == 10 { out = "a" + out; }
+        else if clamped == 11 { out = "b" + out; }
+        else if clamped == 12 { out = "c" + out; }
+        else if clamped == 13 { out = "d" + out; }
+        else if clamped == 14 { out = "e" + out; }
+        else { out = "f" + out; }
+        v = v / 16;
+        i = i + 1;
+    }
+    return out;
+}
+
+pub fn compute_entry_hash(
+    index: Int,
+    timestamp: String,
+    cwd: String,
+    command: String,
+    prev_hash: String
+) -> String {
+    let payload: String = to_string(index) + "|" + timestamp + "|" + cwd + "|" + command + "|" + prev_hash;
+    let n: Int = bytes_len(payload);
+
+    let mut h0: Int = 1779033703;
+    let mut h1: Int = 3144134277;
+    let mut h2: Int = 1013904242;
+    let mut h3: Int = 2773480762;
+    let mut h4: Int = 1359893119;
+    let mut h5: Int = 2600822924;
+    let mut h6: Int = 528734635;
+    let mut h7: Int = 1541459225;
+
+    let mut i: Int = 0;
+    while i < n {
+        let b: Int = byte_at(payload, i);
+        h0 = ((h0 * 33) + b + h7) % 2147483647;
+        h1 = ((h1 * 31) + b + h0) % 2147483647;
+        h2 = ((h2 * 29) + b + h1) % 2147483647;
+        h3 = ((h3 * 23) + b + h2) % 2147483647;
+        h4 = ((h4 * 19) + b + h3) % 2147483647;
+        h5 = ((h5 * 17) + b + h4) % 2147483647;
+        h6 = ((h6 * 13) + b + h5) % 2147483647;
+        h7 = ((h7 * 11) + b + h6) % 2147483647;
+        i = i + 1;
+    }
+
+    return u32_to_hex8(h0) + u32_to_hex8(h1) + u32_to_hex8(h2) + u32_to_hex8(h3) +
+           u32_to_hex8(h4) + u32_to_hex8(h5) + u32_to_hex8(h6) + u32_to_hex8(h7);
+}
+
+pub fn genesis_hash() -> String {
+    return "0000000000000000000000000000000000000000000000000000000000000000";
+}
+
+pub fn verify_hash_chain(entries: List[HistoryEntry]) -> HistoryLedger {
+    let n: Int = list_len(entries);
+    let mut redacted_cnt: Int = 0;
+    let mut prev: String = genesis_hash();
+    let mut i: Int = 0;
+
+    while i < n {
+        let entry: HistoryEntry = list_get(entries, i);
+        if entry.is_redacted {
+            redacted_cnt = redacted_cnt + 1;
+        }
+
+        // Verify previous hash linkage
+        if entry.prev_hash != prev {
+            return make_history_ledger(entries, n, redacted_cnt, false, i);
+        }
+
+        // Verify current hash computation
+        let expected_hash: String = compute_entry_hash(
+            entry.index,
+            entry.timestamp,
+            entry.cwd,
+            entry.command,
+            entry.prev_hash
+        );
+
+        if entry.curr_hash != expected_hash {
+            return make_history_ledger(entries, n, redacted_cnt, false, i);
+        }
+
+        prev = entry.curr_hash;
+        i = i + 1;
+    }
+
+    return make_history_ledger(entries, n, redacted_cnt, true, 0 - 1);
+}

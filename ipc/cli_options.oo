@@ -1,0 +1,104 @@
+// # Command Line Interface Options Parser for oohistory
+//
+// Logline: Decodes POSIX flags, search filters, and append operations into structured options.
+//
+// Setup: Pure string argument processor avoiding nested struct mutation to maintain compiler safety.
+//
+// Beats:
+//   1. Parse history depth limits, keyword queries, and append commands.
+//   2. Support cryptographic verification, telemetry statistics, and file overrides.
+//   3. Handle help, version, test, demo, and MCP protocol activation.
+//   4. Export default and parsed configuration structs.
+
+pub type CliOptions = struct {
+    limit: Int,
+    search: String,
+    append_cmd: String,
+    ledger_file: String,
+    do_verify: Bool,
+    stats: Bool,
+    json: Bool,
+    color: Bool,
+    demo: Bool,
+    test: Bool,
+    help: Bool,
+    version: Bool,
+    mcp: Bool
+};
+
+pub fn default_cli_options() -> CliOptions {
+    return CliOptions {
+        limit: 0,
+        search: "",
+        append_cmd: "",
+        ledger_file: "",
+        do_verify: false,
+        stats: false,
+        json: false,
+        color: true,
+        demo: false,
+        test: false,
+        help: false,
+        version: false,
+        mcp: false
+    };
+}
+
+pub fn parse_int_val(s: String) -> Int {
+    let n: Int = chars_len(s);
+    let mut out: Int = 0;
+    let mut i: Int = 0;
+    while i < n {
+        let b: Int = ord(char_at(s, i));
+        if b >= 48 && b <= 57 {
+            out = out * 10 + (b - 48);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+pub fn parse_cli_options(args: List[String]) -> CliOptions {
+    let mut opts: CliOptions = default_cli_options();
+    let num_args: Int = list_len(args);
+    let mut i: Int = 0;
+
+    while i < num_args {
+        let arg: String = list_get(args, i);
+
+        if arg == "-h" || arg == "--help" {
+            opts.help = true;
+        } else if arg == "-v" || arg == "--version" {
+            opts.version = true;
+        } else if arg == "--mcp" {
+            opts.mcp = true;
+        } else if arg == "-D" || arg == "--demo" {
+            opts.demo = true;
+        } else if arg == "--test" {
+            opts.test = true;
+        } else if arg == "-j" || arg == "--json" {
+            opts.json = true;
+        } else if arg == "-V" || arg == "--verify" {
+            opts.do_verify = true;
+        } else if arg == "--stats" {
+            opts.stats = true;
+        } else if arg == "--no-color" {
+            opts.color = false;
+        } else if (arg == "-n" || arg == "--limit") && i + 1 < num_args {
+            i = i + 1;
+            opts.limit = parse_int_val(list_get(args, i));
+        } else if (arg == "-s" || arg == "--search" || arg == "-r" || arg == "--grep") && i + 1 < num_args {
+            i = i + 1;
+            opts.search = list_get(args, i);
+        } else if (arg == "-a" || arg == "--append") && i + 1 < num_args {
+            i = i + 1;
+            opts.append_cmd = list_get(args, i);
+        } else if (arg == "-f" || arg == "--file") && i + 1 < num_args {
+            i = i + 1;
+            opts.ledger_file = list_get(args, i);
+        }
+        i = i + 1;
+    }
+
+    return opts;
+}
